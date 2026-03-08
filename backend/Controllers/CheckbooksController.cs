@@ -28,10 +28,56 @@ public class CheckbooksController : ControllerBase
         return int.Parse(userIdClaim ?? "0");
     }
 
+    // Helper method to get the creator of a checkbook via AuditLog
+    private async Task<User?> GetCheckbookCreatorAsync(int checkbookId)
+    {
+        var auditLog = await _context.AuditLogs
+            .Include(a => a.User)
+            .Where(a => a.Action == "CREATE_CHECKBOOK" && a.EntityType == "Checkbook" && a.EntityId == checkbookId)
+            .OrderBy(a => a.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        return auditLog?.User;
+    }
+
+    // Helper method to check if current user has access to a checkbook
+    private async Task<bool> HasAccessToCheckbookAsync(int checkbookId, User currentUser)
+    {
+        // Admin and direction have full access
+        if (currentUser.Role == "admin" || currentUser.Role == "direction")
+            return true;
+
+        var creator = await GetCheckbookCreatorAsync(checkbookId);
+        if (creator == null)
+            return false; // If no creator found, deny access by default
+
+        // Regionale users can only access checkbooks created by their region
+        if (currentUser.Role == "regionale")
+        {
+            return creator.Role == "regionale" && 
+                   creator.Region == currentUser.Region && 
+                   !string.IsNullOrEmpty(currentUser.Region);
+        }
+
+        // Comptabilite users can only access checkbooks created by comptabilite
+        if (currentUser.Role == "comptabilite")
+        {
+            return creator.Role == "comptabilite";
+        }
+
+        return false;
+    }
+
     // GET: api/checkbooks
     [HttpGet]
     public async Task<ActionResult<IEnumerable<object>>> GetCheckbooks([FromQuery] int? bankId)
     {
+        var userId = GetCurrentUserId();
+        var currentUser = await _context.Users.FindAsync(userId);
+        
+        if (currentUser == null)
+            return Unauthorized();
+
         var query = _context.Checkbooks.Include(c => c.Bank).AsQueryable();
         
         if (bankId.HasValue)
@@ -39,50 +85,62 @@ public class CheckbooksController : ControllerBase
             query = query.Where(c => c.BankId == bankId.Value);
         }
 
-        var checkbooks = await query
+        var allCheckbooks = await query
             .OrderByDescending(c => c.CreatedAt)
-            .Select(c => new
-            {
-                c.Id,
-                c.BankId,
-                BankName = c.Bank.Name,
-                c.AgencyName,
-                c.AgencyCode,
-                c.Serie,
-                c.StartNumber,
-                c.EndNumber,
-                c.Capacity,
-                c.UsedCount,
-                Remaining = c.Capacity - c.UsedCount,
-                c.CreatedAt
-            })
             .ToListAsync();
 
-        return Ok(checkbooks);
+        // Filter based on user role
+        var filteredCheckbooks = new List<Checkbook>();
+        
+        if (currentUser.Role == "admin" || currentUser.Role == "direction")
+        {
+            // Admin and direction see everything
+            filteredCheckbooks = allCheckbooks;
+        }
+        else
+        {
+            // Filter for regionale and comptabilite
+            foreach (var checkbook in allCheckbooks)
+            {
+                if (await HasAccessToCheckbookAsync(checkbook.Id, currentUser))
+                {
+                    filteredCheckbooks.Add(checkbook);
+                }
+            }
+        }
+
+        var result = filteredCheckbooks.Select(c => new
+        {
+            c.Id,
+            c.BankId,
+            BankName = c.Bank.Name,
+            c.AgencyName,
+            c.AgencyCode,
+            c.Serie,
+            c.StartNumber,
+            c.EndNumber,
+            c.Capacity,
+            c.UsedCount,
+            Remaining = c.Capacity - c.UsedCount,
+            c.CreatedAt
+        }).ToList();
+
+        return Ok(result);
     }
 
     // GET: api/checkbooks/5
     [HttpGet("{id}")]
     public async Task<ActionResult<object>> GetCheckbook(int id)
     {
+        var userId = GetCurrentUserId();
+        var currentUser = await _context.Users.FindAsync(userId);
+        
+        if (currentUser == null)
+            return Unauthorized();
+
         var checkbook = await _context.Checkbooks
             .Include(c => c.Bank)
             .Where(c => c.Id == id)
-            .Select(c => new
-            {
-                c.Id,
-                c.BankId,
-                BankName = c.Bank.Name,
-                c.AgencyName,
-                c.AgencyCode,
-                c.Serie,
-                c.StartNumber,
-                c.EndNumber,
-                c.Capacity,
-                c.UsedCount,
-                Remaining = c.Capacity - c.UsedCount,
-                c.CreatedAt
-            })
             .FirstOrDefaultAsync();
 
         if (checkbook == null)
@@ -90,7 +148,32 @@ public class CheckbooksController : ControllerBase
             return NotFound(new { message = "Chéquier non trouvé" });
         }
 
-        return Ok(checkbook);
+        // Check access for regionale and comptabilite
+        if (currentUser.Role == "regionale" || currentUser.Role == "comptabilite")
+        {
+            if (!await HasAccessToCheckbookAsync(id, currentUser))
+            {
+                return StatusCode(403, new { message = "Accès refusé à ce chéquier" });
+            }
+        }
+
+        var result = new
+        {
+            checkbook.Id,
+            checkbook.BankId,
+            BankName = checkbook.Bank.Name,
+            checkbook.AgencyName,
+            checkbook.AgencyCode,
+            checkbook.Serie,
+            checkbook.StartNumber,
+            checkbook.EndNumber,
+            checkbook.Capacity,
+            checkbook.UsedCount,
+            Remaining = checkbook.Capacity - checkbook.UsedCount,
+            checkbook.CreatedAt
+        };
+
+        return Ok(result);
     }
 
     // POST: api/checkbooks
@@ -192,10 +275,25 @@ public class CheckbooksController : ControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> UpdateCheckbook(int id, [FromBody] UpdateCheckbookRequest request)
     {
+        var userId = GetCurrentUserId();
+        var currentUser = await _context.Users.FindAsync(userId);
+        
+        if (currentUser == null)
+            return Unauthorized();
+
         var checkbook = await _context.Checkbooks.FindAsync(id);
         if (checkbook == null)
         {
             return NotFound(new { message = "Chéquier non trouvé" });
+        }
+
+        // Check access for regionale and comptabilite
+        if (currentUser.Role == "regionale" || currentUser.Role == "comptabilite")
+        {
+            if (!await HasAccessToCheckbookAsync(id, currentUser))
+            {
+                return StatusCode(403, new { message = "Accès refusé à ce chéquier" });
+            }
         }
 
         // Vérifier que le chéquier n'a jamais été utilisé
@@ -215,7 +313,6 @@ public class CheckbooksController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        var userId = GetCurrentUserId();
         var newValues = new
         {
             agencyName = request.AgencyName,
@@ -236,10 +333,25 @@ public class CheckbooksController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteCheckbook(int id)
     {
+        var userId = GetCurrentUserId();
+        var currentUser = await _context.Users.FindAsync(userId);
+        
+        if (currentUser == null)
+            return Unauthorized();
+
         var checkbook = await _context.Checkbooks.FindAsync(id);
         if (checkbook == null)
         {
             return NotFound(new { message = "Chéquier non trouvé" });
+        }
+
+        // Check access for regionale and comptabilite
+        if (currentUser.Role == "regionale" || currentUser.Role == "comptabilite")
+        {
+            if (!await HasAccessToCheckbookAsync(id, currentUser))
+            {
+                return StatusCode(403, new { message = "Accès refusé à ce chéquier" });
+            }
         }
 
         // Vérifier que le chéquier n'a jamais été utilisé
@@ -269,7 +381,6 @@ public class CheckbooksController : ControllerBase
         _context.Checkbooks.Remove(checkbook);
         await _context.SaveChangesAsync();
 
-        var userId = GetCurrentUserId();
         await _auditService.LogAction(
             userId,
             "DELETE_CHECKBOOK",
@@ -284,10 +395,25 @@ public class CheckbooksController : ControllerBase
     [HttpGet("{id}/next-reference")]
     public async Task<ActionResult<object>> GetNextReference(int id)
     {
+        var userId = GetCurrentUserId();
+        var currentUser = await _context.Users.FindAsync(userId);
+        
+        if (currentUser == null)
+            return Unauthorized();
+
         var checkbook = await _context.Checkbooks.FindAsync(id);
         if (checkbook == null)
         {
             return NotFound(new { message = "Chéquier non trouvé" });
+        }
+
+        // Check access for regionale and comptabilite
+        if (currentUser.Role == "regionale" || currentUser.Role == "comptabilite")
+        {
+            if (!await HasAccessToCheckbookAsync(id, currentUser))
+            {
+                return StatusCode(403, new { message = "Accès refusé à ce chéquier" });
+            }
         }
 
         if (checkbook.UsedCount >= checkbook.Capacity)

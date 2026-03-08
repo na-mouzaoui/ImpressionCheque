@@ -30,19 +30,98 @@ public class SuppliersController : ControllerBase
         return int.Parse(userIdClaim ?? "0");
     }
 
+    // Helper method to get the creator of a supplier via AuditLog
+    private async Task<User?> GetSupplierCreatorAsync(int supplierId)
+    {
+        var auditLog = await _context.AuditLogs
+            .Include(a => a.User)
+            .Where(a => a.Action == "CREATE_SUPPLIER" && a.EntityType == "Supplier" && a.EntityId == supplierId)
+            .OrderBy(a => a.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        return auditLog?.User;
+    }
+
+    // Helper method to check if current user has access to a supplier
+    private async Task<bool> HasAccessToSupplierAsync(int supplierId, User currentUser)
+    {
+        // Admin and direction have full access
+        if (currentUser.Role == "admin" || currentUser.Role == "direction")
+            return true;
+
+        var creator = await GetSupplierCreatorAsync(supplierId);
+        if (creator == null)
+            return false; // If no creator found, deny access by default
+
+        // Regionale users can only access suppliers created by their region
+        if (currentUser.Role == "regionale")
+        {
+            return creator.Role == "regionale" && 
+                   creator.Region == currentUser.Region && 
+                   !string.IsNullOrEmpty(currentUser.Region);
+        }
+
+        // Comptabilite users can only access suppliers created by comptabilite
+        if (currentUser.Role == "comptabilite")
+        {
+            return creator.Role == "comptabilite";
+        }
+
+        return false;
+    }
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Supplier>>> GetAllSuppliers()
     {
-        var suppliers = await _supplierService.GetAllSuppliersAsync();
-        return Ok(suppliers);
+        var userId = GetCurrentUserId();
+        var currentUser = await _context.Users.FindAsync(userId);
+        
+        if (currentUser == null)
+            return Unauthorized();
+
+        var allSuppliers = await _supplierService.GetAllSuppliersAsync();
+
+        // Filter based on user role
+        if (currentUser.Role == "admin" || currentUser.Role == "direction")
+        {
+            // Admin and direction see everything
+            return Ok(allSuppliers);
+        }
+
+        // Filter for regionale and comptabilite
+        var filteredSuppliers = new List<Supplier>();
+        foreach (var supplier in allSuppliers)
+        {
+            if (await HasAccessToSupplierAsync(supplier.Id, currentUser))
+            {
+                filteredSuppliers.Add(supplier);
+            }
+        }
+
+        return Ok(filteredSuppliers);
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<Supplier>> GetSupplier(int id)
     {
+        var userId = GetCurrentUserId();
+        var currentUser = await _context.Users.FindAsync(userId);
+        
+        if (currentUser == null)
+            return Unauthorized();
+
         var supplier = await _supplierService.GetSupplierByIdAsync(id);
         if (supplier == null)
             return NotFound(new { message = "Fournisseur introuvable" });
+
+        // Check access for regionale and comptabilite
+        if (currentUser.Role == "regionale" || currentUser.Role == "comptabilite")
+        {
+            if (!await HasAccessToSupplierAsync(id, currentUser))
+            {
+                return StatusCode(403, new { message = "Accès refusé à ce fournisseur" });
+            }
+        }
         
         return Ok(supplier);
     }
@@ -76,6 +155,12 @@ public class SuppliersController : ControllerBase
     [HttpPut("{id}")]
     public async Task<ActionResult<Supplier>> UpdateSupplier(int id, [FromBody] Supplier supplier)
     {
+        var userId = GetCurrentUserId();
+        var currentUser = await _context.Users.FindAsync(userId);
+        
+        if (currentUser == null)
+            return Unauthorized();
+
         var trimmedName = supplier.Name?.Trim();
         if (string.IsNullOrEmpty(trimmedName))
             return BadRequest(new { message = "Le nom du fournisseur est requis" });
@@ -84,6 +169,15 @@ public class SuppliersController : ControllerBase
         var existingSupplier = await _supplierService.GetSupplierByIdAsync(id);
         if (existingSupplier == null)
             return NotFound(new { message = "Fournisseur introuvable" });
+
+        // Check access for regionale and comptabilite
+        if (currentUser.Role == "regionale" || currentUser.Role == "comptabilite")
+        {
+            if (!await HasAccessToSupplierAsync(id, currentUser))
+            {
+                return StatusCode(403, new { message = "Accès refusé à ce fournisseur" });
+            }
+        }
 
         var oldName = existingSupplier.Name;
         supplier.Name = trimmedName;
@@ -113,7 +207,6 @@ public class SuppliersController : ControllerBase
             }
         }
 
-        var userId = GetCurrentUserId();
         await _auditService.LogAction(
             userId,
             "UPDATE_SUPPLIER",
@@ -128,15 +221,29 @@ public class SuppliersController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteSupplier(int id)
     {
+        var userId = GetCurrentUserId();
+        var currentUser = await _context.Users.FindAsync(userId);
+        
+        if (currentUser == null)
+            return Unauthorized();
+
         var supplier = await _supplierService.GetSupplierByIdAsync(id);
         if (supplier == null)
             return NotFound(new { message = "Fournisseur introuvable" });
+
+        // Check access for regionale and comptabilite
+        if (currentUser.Role == "regionale" || currentUser.Role == "comptabilite")
+        {
+            if (!await HasAccessToSupplierAsync(id, currentUser))
+            {
+                return StatusCode(403, new { message = "Accès refusé à ce fournisseur" });
+            }
+        }
 
         var success = await _supplierService.DeleteSupplierAsync(id);
         if (!success)
             return StatusCode(500, new { message = "Erreur lors de la suppression" });
 
-        var userId = GetCurrentUserId();
         await _auditService.LogAction(
             userId,
             "DELETE_SUPPLIER",
