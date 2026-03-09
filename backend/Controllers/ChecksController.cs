@@ -49,15 +49,14 @@ public class ChecksController : ControllerBase
         
         var checks = await checksQuery.ToListAsync();
         
-        // Filter by region if user is regionale
+        // Filter by region if user is regionale: show only checks from regionale users of the same region
         if (user.Role == "regionale" && !string.IsNullOrEmpty(user.Region))
         {
-            var region = await _context.Regions.FirstOrDefaultAsync(r => r.Name == user.Region);
-            if (region != null)
-            {
-                var villes = JsonSerializer.Deserialize<List<string>>(region.VillesJson) ?? new List<string>();
-                checks = checks.Where(c => !string.IsNullOrEmpty(c.Ville) && villes.Contains(c.Ville)).ToList();
-            }
+            var regionUserIds = await _context.Users
+                .Where(u => u.Role == "regionale" && u.Region == user.Region)
+                .Select(u => u.Id)
+                .ToListAsync();
+            checks = checks.Where(c => regionUserIds.Contains(c.UserId)).ToList();
         }
 
         var result = checks.Select(c => new
@@ -93,17 +92,6 @@ public class ChecksController : ControllerBase
             .AsQueryable();
         
         var checks = await checksQuery.ToListAsync();
-
-        // Filter by region if user is regionale
-        if (user.Role == "regionale" && !string.IsNullOrEmpty(user.Region))
-        {
-            var region = await _context.Regions.FirstOrDefaultAsync(r => r.Name == user.Region);
-            if (region != null)
-            {
-                var villes = JsonSerializer.Deserialize<List<string>>(region.VillesJson) ?? new List<string>();
-                checks = checks.Where(c => !string.IsNullOrEmpty(c.Ville) && villes.Contains(c.Ville)).ToList();
-            }
-        }
 
         var result = checks.Select(c => new
         {
@@ -319,25 +307,24 @@ public class ChecksController : ControllerBase
         if (user == null)
             return Unauthorized();
 
-        // If regionale, calculate stats only for their region's villes
+        // If regionale, calculate stats only for checks from users of the same region
         if (user.Role == "regionale" && !string.IsNullOrEmpty(user.Region))
         {
-            var region = await _context.Regions.FirstOrDefaultAsync(r => r.Name == user.Region);
-            if (region != null)
-            {
-                var villes = JsonSerializer.Deserialize<List<string>>(region.VillesJson) ?? new List<string>();
-                var filteredChecks = await _context.Checks
-                    .Where(c => !string.IsNullOrEmpty(c.Ville) && villes.Contains(c.Ville))
-                    .ToListAsync();
+            var regionUserIds = await _context.Users
+                .Where(u => u.Role == "regionale" && u.Region == user.Region)
+                .Select(u => u.Id)
+                .ToListAsync();
+            var filteredChecks = await _context.Checks
+                .Where(c => regionUserIds.Contains(c.UserId))
+                .ToListAsync();
 
-                var totalAmount = filteredChecks.Sum(c => c.Amount);
-                var totalCount = filteredChecks.Count;
-                var currentMonth = DateTime.UtcNow.Month;
-                var currentYear = DateTime.UtcNow.Year;
-                var monthlyCount = filteredChecks.Count(c => c.CreatedAt.Month == currentMonth && c.CreatedAt.Year == currentYear);
+            var totalAmount = filteredChecks.Sum(c => c.Amount);
+            var totalCount = filteredChecks.Count;
+            var currentMonth = DateTime.UtcNow.Month;
+            var currentYear = DateTime.UtcNow.Year;
+            var monthlyCount = filteredChecks.Count(c => c.CreatedAt.Month == currentMonth && c.CreatedAt.Year == currentYear);
 
-                return Ok(new { totalAmount, totalCount, monthlyCount });
-            }
+            return Ok(new { totalAmount, totalCount, monthlyCount });
         }
 
         var stats = await _checkService.GetStatsAsync();
