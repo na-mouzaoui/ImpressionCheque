@@ -25,6 +25,8 @@ public class UsersController : ControllerBase
             {
                 id = u.Id.ToString(),
                 email = u.Email,
+                role = u.Role,
+                region = u.Region,
                 createdAt = u.CreatedAt
             })
             .ToListAsync();

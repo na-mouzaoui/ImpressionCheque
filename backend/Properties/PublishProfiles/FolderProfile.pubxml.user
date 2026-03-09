@@ -6,7 +6,7 @@ en modifiant ce fichier MSBuild. Pour en savoir plus à ce sujet, visitez https:
 <Project>
   <PropertyGroup>
     <_PublishTargetUrl>C:\Nouveau dossier</_PublishTargetUrl>
-    <History>True|2026-03-08T10:03:08.8298540Z||;</History>
+    <History>True|2026-03-09T11:58:33.6321051Z||;True|2026-03-09T12:56:52.7580140+01:00||;True|2026-03-09T12:30:34.2512737+01:00||;True|2026-03-09T12:29:57.3119833+01:00||;True|2026-03-09T11:58:55.9514652+01:00||;True|2026-03-08T11:03:08.8298540+01:00||;</History>
     <LastFailureDetails />
   </PropertyGroup>
 </Project>

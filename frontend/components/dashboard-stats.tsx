@@ -50,12 +50,14 @@ export function DashboardStats({ stats, checks, users, currentUser, regions = []
   const [endDate, setEndDate] = useState("")
   const [showFilters, setShowFilters] = useState(false)
 
-  // Filtrer les chèques par région pour les profils régionaux
-  // Un utilisateur régional voit uniquement les chèques émis par des utilisateurs de la même région
+  // Le backend filtre déjà les chèques par région pour les profils régionaux.
+  // Le frontend affine en vérifiant que l'émetteur est bien un profil régional de la même région.
   let filteredChecks = currentUser.role === "regionale" && currentUser.region
     ? checks.filter(check => {
         const checkUser = users.find(u => String(u.id) === String(check.userId))
-        return checkUser?.role === "regionale" && checkUser?.region === currentUser.region
+        // Si l'utilisateur n'est pas trouvé dans la liste, on fait confiance au backend
+        if (!checkUser) return true
+        return checkUser.role === "regionale" && checkUser.region === currentUser.region
       })
     : checks
 
