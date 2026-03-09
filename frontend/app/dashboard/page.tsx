@@ -162,7 +162,9 @@ export default function DashboardPage() {
         Array.isArray(payload) ? (payload as User[]) : ([] as User[]),
       )
       const regions = await parseResponse<Region[]>(regionsRes, [] as Region[], (payload) =>
-        Array.isArray(payload) ? (payload as Region[]) : ([] as Region[]),
+        Array.isArray(payload)
+          ? (payload as any[]).map(r => ({ id: r.id, name: r.name, wilayas: r.villes ?? r.wilayas ?? [] }))
+          : ([] as Region[]),
       )
       const banks = await parseResponse<Bank[]>(banksRes, [] as Bank[], (payload) => {
         if (payload && typeof payload === "object" && Array.isArray((payload as { banks?: Bank[] }).banks)) {

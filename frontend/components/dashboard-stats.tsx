@@ -58,7 +58,7 @@ export function DashboardStats({ stats, checks, users, currentUser, regions = []
         if (!userRegion) return false
         
         // Vérifier si la ville du chèque est dans les wilayas de la région
-        return userRegion.wilayas?.includes(check.city)
+        return userRegion.wilayas?.includes(check.ville) || userRegion.wilayas?.includes(check.city)
       })
     : checks
 
