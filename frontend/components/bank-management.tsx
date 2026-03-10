@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Plus, Upload, Trash2, Edit } from "lucide-react"
 import type { Bank } from "@/lib/db"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/hooks/use-auth"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +30,8 @@ type BankManagementProps = {
 
 export function BankManagement({ onChange }: BankManagementProps) {
   const { toast } = useToast()
+  const { user } = useAuth()
+  const isAdmin = user?.role === "admin"
   const [banks, setBanks] = useState<Bank[]>([])
   const [isAdding, setIsAdding] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -191,7 +194,12 @@ export function BankManagement({ onChange }: BankManagementProps) {
   return (
     <div className="space-y-6">
       <div className="flex justify-end">
-        <Button onClick={() => setIsAdding(!isAdding)} className="flex items-center gap-2">
+        <Button
+          onClick={() => setIsAdding(!isAdding)}
+          className="flex items-center gap-2"
+          disabled={!isAdmin}
+          title={!isAdmin ? "Réservé aux administrateurs" : undefined}
+        >
           <Plus className="h-4 w-4" />
           Ajouter une banque
         </Button>
@@ -253,7 +261,9 @@ export function BankManagement({ onChange }: BankManagementProps) {
                   variant="ghost"
                   size="sm"
                   onClick={() => startEdit(bank)}
-                  className="text-blue-600 hover:text-blue-700"
+                  disabled={!isAdmin}
+                  title={!isAdmin ? "Réservé aux administrateurs" : undefined}
+                  className="text-blue-600 hover:text-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Edit className="h-4 w-4" />
                 </Button>
@@ -261,7 +271,9 @@ export function BankManagement({ onChange }: BankManagementProps) {
                   variant="ghost"
                   size="sm"
                   onClick={() => setDeleteConfirmId(bank.id)}
-                  className="text-red-600 hover:text-red-700"
+                  disabled={!isAdmin}
+                  title={!isAdmin ? "Réservé aux administrateurs" : undefined}
+                  className="text-red-600 hover:text-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
