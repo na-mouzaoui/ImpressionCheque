@@ -70,6 +70,47 @@ public class SuppliersController : ControllerBase
         return false;
     }
 
+    // Validate uniqueness by creator scope:
+    // - regionale: unique per region (for suppliers created by regionale users)
+    // - central roles (comptabilite/admin/direction): unique among central-created suppliers
+    private async Task<bool> SupplierNameExistsInScopeAsync(string supplierName, User currentUser, int? exceptSupplierId = null)
+    {
+        var normalizedName = supplierName.Trim().ToLowerInvariant();
+
+        var matchingSuppliers = _context.Suppliers
+            .AsNoTracking()
+            .Where(s => (!exceptSupplierId.HasValue || s.Id != exceptSupplierId.Value)
+                     && s.Name.ToLower() == normalizedName)
+            .Select(s => s.Id);
+
+        var supplierCreators = from audit in _context.AuditLogs.AsNoTracking()
+                               join user in _context.Users.AsNoTracking() on audit.UserId equals user.Id
+                               where audit.Action == "CREATE_SUPPLIER"
+                                  && audit.EntityType == "Supplier"
+                                  && audit.EntityId.HasValue
+                                  && matchingSuppliers.Contains(audit.EntityId.Value)
+                               select new
+                               {
+                                   CreatorRole = user.Role,
+                                   CreatorRegion = user.Region
+                               };
+
+        if (currentUser.Role == "regionale")
+        {
+            var currentRegion = currentUser.Region?.Trim();
+            if (string.IsNullOrEmpty(currentRegion))
+                return false;
+
+            var normalizedRegion = currentRegion.ToLowerInvariant();
+            return await supplierCreators.AnyAsync(c =>
+                c.CreatorRole == "regionale" &&
+                c.CreatorRegion != null &&
+                c.CreatorRegion.ToLower() == normalizedRegion);
+        }
+
+        return await supplierCreators.AnyAsync(c => c.CreatorRole != "regionale");
+    }
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Supplier>>> GetAllSuppliers()
     {
@@ -129,18 +170,23 @@ public class SuppliersController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<Supplier>> CreateSupplier([FromBody] Supplier supplier)
     {
+        var userId = GetCurrentUserId();
+        var currentUser = await _context.Users.FindAsync(userId);
+
+        if (currentUser == null)
+            return Unauthorized();
+
         var trimmedName = supplier.Name?.Trim();
         if (string.IsNullOrEmpty(trimmedName))
             return BadRequest(new { message = "Le nom du fournisseur est requis" });
 
         supplier.Name = trimmedName;
 
-        if (await _supplierService.SupplierNameExistsAsync(trimmedName))
+        if (await SupplierNameExistsInScopeAsync(trimmedName, currentUser))
             return Conflict(new { message = "Un fournisseur avec ce nom existe déjà" });
 
         var created = await _supplierService.CreateSupplierAsync(supplier);
 
-        var userId = GetCurrentUserId();
         await _auditService.LogAction(
             userId,
             "CREATE_SUPPLIER",
@@ -182,7 +228,7 @@ public class SuppliersController : ControllerBase
         var oldName = existingSupplier.Name;
         supplier.Name = trimmedName;
 
-        if (await _supplierService.SupplierNameExistsAsync(trimmedName, id))
+        if (await SupplierNameExistsInScopeAsync(trimmedName, currentUser, id))
             return Conflict(new { message = "Un fournisseur avec ce nom existe déjà" });
 
         var updated = await _supplierService.UpdateSupplierAsync(id, supplier);
